@@ -414,10 +414,9 @@ async function refreshLogs() {
     renderLogs(data.logs);
     currentPageSpan.textContent = `Page ${currentPage}`;
     
-    // Display query time
-    if (data.time) {
-        const queryDuration = Date.now() - data.time;
-        queryTimeSpan.textContent = `Query took ${queryDuration}ms`;
+    // Display query time from server
+    if (data.queryTime !== undefined) {
+        queryTimeSpan.textContent = `Query took ${data.queryTime}ms`;
     }
 }
 

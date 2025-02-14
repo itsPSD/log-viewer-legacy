@@ -313,6 +313,7 @@ app.get('/api/actions', async (req, res) => {
 
 app.get('/api/logs', async (req, res) => {
     try {
+        const startTime = process.hrtime();
         const connection = await pool.getConnection();
         
         let query = 'SELECT id, identifier, action, details, metadata, timestamp FROM user_logs WHERE 1=1';
@@ -388,9 +389,14 @@ app.get('/api/logs', async (req, res) => {
         const [rows] = await connection.execute(query, params);
         connection.release();
 
+        // Calculate query time in milliseconds using high-resolution time
+        const endTime = process.hrtime(startTime);
+        const queryTimeMs = Math.round((endTime[0] * 1000) + (endTime[1] / 1000000));
+
         res.json({
             logs: rows,
             page: page,
+            queryTime: queryTimeMs,
             time: Date.now()
         });
     } catch (error) {
