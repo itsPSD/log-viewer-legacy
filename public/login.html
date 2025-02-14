@@ -40,7 +40,10 @@
     <script>
         // Check for error parameter in URL
         const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('error') === 'unauthorized') {
+        const error = urlParams.get('error');
+        
+        // Show error message if authentication failed
+        if (error === 'auth_failed') {
             document.getElementById('errorMessage').classList.remove('hidden');
         }
     </script>

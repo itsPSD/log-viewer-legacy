@@ -16,6 +16,12 @@ const compression = require('compression');
 // Production check
 const isProduction = process.env.NODE_ENV === 'production';
 
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Trust proxy - required for rate limiting behind reverse proxy
+app.set('trust proxy', 1);
+
 // Validate required environment variables
 const requiredEnvVars = [
     'DISCORD_CLIENT_ID',
@@ -33,9 +39,6 @@ for (const envVar of requiredEnvVars) {
         process.exit(1);
     }
 }
-
-const app = express();
-const port = process.env.PORT || 3000;
 
 // Database configuration
 const dbConfig = {
@@ -89,8 +92,9 @@ if (isProduction) {
 const sessionStore = new MySQLStore({
     ...dbConfig,
     clearExpired: true,
-    checkExpirationInterval: 900000, // 15 minutes
-    expiration: 86400000, // 24 hours
+    checkExpirationInterval: 900000,
+    expiration: 86400000,
+    createDatabaseTable: true // Ensure table exists
 });
 
 // Session configuration with security options
@@ -99,12 +103,14 @@ app.use(session({
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+    proxy: true, // Required for secure cookies behind proxy
     cookie: {
-        secure: isProduction, // Only use secure cookies in production
+        secure: isProduction,
         httpOnly: true,
-        sameSite: 'strict',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
+        sameSite: 'lax', // Changed from strict to lax for better compatibility
+        maxAge: 24 * 60 * 60 * 1000
+    },
+    name: 'sessionId' // Custom session cookie name
 }));
 
 // Initialize passport
@@ -113,10 +119,11 @@ app.use(passport.session());
 
 // Passport Discord Strategy with error handling
 passport.use(new DiscordStrategy({
-    clientID: config.discord.clientId,
-    clientSecret: config.discord.clientSecret,
-    callbackURL: config.discord.callbackURL,
-    scope: ['identify']
+    clientID: process.env.DISCORD_CLIENT_ID,
+    clientSecret: process.env.DISCORD_CLIENT_SECRET,
+    callbackURL: process.env.DISCORD_CALLBACK_URL,
+    scope: ['identify'],
+    proxy: true // Enable proxy support
 }, async (accessToken, refreshToken, profile, done) => {
     try {
         if (config.allowedUsers.includes(profile.id)) {
@@ -128,27 +135,53 @@ passport.use(new DiscordStrategy({
     }
 }));
 
-passport.serializeUser((user, done) => done(null, user));
-passport.deserializeUser((user, done) => done(null, user));
-
-// Rate limiting with different settings for production
-const rateLimit = require('express-rate-limit');
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: isProduction ? 50 : 100, // Stricter in production
-    message: 'Too many login attempts, please try again later.'
+// Serialize the entire profile
+passport.serializeUser((user, done) => {
+    done(null, user);
 });
 
-// Auth middleware
+// Deserialize with error handling
+passport.deserializeUser((user, done) => {
+    try {
+        done(null, user);
+    } catch (error) {
+        done(error);
+    }
+});
+
+// Auth middleware with better error handling
 function isAuthenticated(req, res, next) {
     if (req.isAuthenticated()) {
         return next();
     }
-    if (req.xhr || req.path.startsWith('/api/')) {
-        return res.status(401).json({ error: 'Unauthorized' });
+    
+    // Clear any existing session if not authenticated
+    if (req.session) {
+        req.session.destroy((err) => {
+            if (err) console.error('Session destruction error:', err);
+            if (req.xhr || req.path.startsWith('/api/')) {
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+            res.redirect('/login');
+        });
+    } else {
+        if (req.xhr || req.path.startsWith('/api/')) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        res.redirect('/login');
     }
-    res.redirect('/login');
 }
+
+// Rate limiting with different settings for production
+const rateLimit = require('express-rate-limit');
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: isProduction ? 50 : 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many login attempts, please try again later.',
+    skipSuccessfulRequests: true // Don't count successful logins
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -198,27 +231,36 @@ app.use(express.static('public', {
 // Auth routes
 app.use('/auth/', authLimiter);
 app.get('/login', (req, res) => {
-    // If already authenticated, redirect to home
     if (req.isAuthenticated()) {
         return res.redirect('/');
     }
-    // Pass any error message from authentication
-    const error = req.query.error;
-    res.sendFile(__dirname + '/public/login.html');
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 app.get('/auth/discord', passport.authenticate('discord'));
 
 app.get('/auth/discord/callback',
     passport.authenticate('discord', {
-        failureRedirect: '/login?error=unauthorized',
-        successRedirect: '/'
-    })
+        failureRedirect: '/login?error=auth_failed',
+        keepSessionInfo: true // Preserve session info across redirects
+    }),
+    (req, res) => {
+        res.redirect('/');
+    }
 );
 
 app.get('/logout', (req, res) => {
-    req.logout(() => {
-        res.redirect('/login');
+    req.logout((err) => {
+        if (err) {
+            console.error('Logout error:', err);
+            return res.status(500).json({ error: 'Logout failed' });
+        }
+        req.session.destroy((err) => {
+            if (err) {
+                console.error('Session destruction error:', err);
+            }
+            res.redirect('/login');
+        });
     });
 });
 

@@ -413,6 +413,12 @@ async function refreshLogs() {
     const data = await fetchLogs(params);
     renderLogs(data.logs);
     currentPageSpan.textContent = `Page ${currentPage}`;
+    
+    // Display query time
+    if (data.time) {
+        const queryDuration = Date.now() - data.time;
+        queryTimeSpan.textContent = `Query took ${queryDuration}ms`;
+    }
 }
 
 async function changePage(delta) {
