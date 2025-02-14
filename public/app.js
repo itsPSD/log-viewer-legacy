@@ -24,12 +24,6 @@ document.getElementById('timezone').addEventListener('change', function(e) {
     selectedTimezone = e.target.value;
     // Store the preference
     localStorage.setItem('preferredTimezone', selectedTimezone);
-    // Update the selected option text to show the short version
-    const selectedOption = e.target.options[e.target.selectedIndex];
-    const shortText = selectedOption.getAttribute('data-short');
-    const fullText = selectedOption.text;
-    selectedOption.text = shortText;
-    selectedOption.setAttribute('data-full', fullText);
     // Refresh the display
     refreshLogs();
 });
@@ -208,10 +202,10 @@ function formatTimestamp(timestamp) {
     let timezone;
     
     if (selectedTimezone === 'default') {
-        formatted = moment(date).format('MMM DD, YYYY HH:mm:ss A');
+        formatted = moment(date).format('MMM DD, YYYY HH:mm:ss');
         timezone = moment().format('z');
     } else {
-        formatted = moment(date).tz(selectedTimezone).format('MMM DD, YYYY HH:mm:ss A');
+        formatted = moment(date).tz(selectedTimezone).format('MMM DD, YYYY HH:mm:ss');
         timezone = moment().tz(selectedTimezone).format('z');
     }
     
@@ -436,32 +430,12 @@ async function changePage(delta) {
 
 // Load preferred timezone on startup
 document.addEventListener('DOMContentLoaded', () => {
-    const timezoneSelect = document.getElementById('timezone');
     const savedTimezone = localStorage.getItem('preferredTimezone');
     if (savedTimezone) {
         selectedTimezone = savedTimezone;
+        const timezoneSelect = document.getElementById('timezone');
         timezoneSelect.value = savedTimezone;
     }
-    
-    // Set up the dropdown behavior
-    timezoneSelect.addEventListener('focus', function() {
-        Array.from(this.options).forEach(option => {
-            const fullText = option.getAttribute('data-full');
-            if (fullText) option.text = fullText;
-        });
-    });
-    
-    timezoneSelect.addEventListener('blur', function() {
-        const selectedOption = this.options[this.selectedIndex];
-        const shortText = selectedOption.getAttribute('data-short');
-        if (shortText) selectedOption.text = shortText;
-    });
-    
-    // Initially show short text for selected option
-    const selectedOption = timezoneSelect.options[timezoneSelect.selectedIndex];
-    const shortText = selectedOption.getAttribute('data-short');
-    if (shortText) selectedOption.text = shortText;
-    
     refreshLogs();
     // Hide previous button initially
     const prevButton = document.getElementById('prevPage');
