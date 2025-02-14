@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Legacy India Logs</title>
+    <link rel="icon" href="https://img.itspsd.in/u/BdlvDy.jpg" type="image/jpeg">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="styles.css" rel="stylesheet">
+    <style>
+        .log-row {
+            transition: background-color 0.2s;
+        }
+        .log-row:hover {
+            background-color: rgba(55, 65, 81, 1) !important;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 dark:bg-gray-900 min-h-screen font-montserrat text-xs">
+    <div class="mx-8 px-[1cm] py-4">
+        <!-- Header -->
+        <div class="mb-4">
+            <h1 class="text-xl font-bold text-white mb-1">Logs</h1>
+            <p class="text-gray-400 text-xs">View and search through system logs</p>
+        </div>
+
+        <!-- Actions -->
+        <div class="mb-4">
+            <button class="btn px-2 py-1 text-xs font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700" type="button" id="refreshButton">
+                <i class="mr-1 fa fa-redo-alt"></i>
+                Refresh
+            </button>
+        </div>
+
+        <!-- Querying Section -->
+        <div class="bg-gray-800 rounded-lg shadow-lg mb-4">
+            <div class="p-4">
+                <h2 class="text-sm font-medium text-white mb-3">Filter</h2>
+                <form id="searchForm" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <!-- Identifier -->
+                        <div>
+                            <label class="block mb-1 text-xs text-gray-300" for="identifier">
+                                Identifier <sup class="text-gray-500">*</sup>
+                            </label>
+                            <input class="w-full px-2 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400" 
+                                   id="identifier" name="identifier" placeholder="license:2ced2cabd90f1208e7e056485d4704c7e1284196">
+                        </div>
+
+                        <!-- Action -->
+                        <div class="relative">
+                            <label for="action" class="block text-xs font-medium text-gray-300 mb-1">Action</label>
+                            <div class="flex gap-2 items-center">
+                                <input type="text" id="action" class="w-full px-3 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white" placeholder="Filter by action...">
+                                <button type="button" id="drugLogsBtn" class="btn px-2 py-1 text-xs font-medium text-white bg-yellow-600 hover:bg-yellow-700 rounded" title="Drug Logs">
+                                    <i class="fas fa-pills"></i>
+                                </button>
+                                <button type="button" id="moneyLogsBtn" class="btn px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded" title="Money Logs">
+                                    <i class="fas fa-money-bill-wave"></i>
+                                </button>
+                                <button type="button" id="connectLogsBtn" class="btn px-2 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded" title="Connection Logs">
+                                    <i class="fas fa-network-wired"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Details -->
+                        <div>
+                            <label class="block mb-1 text-xs text-gray-300" for="details">
+                                Details <sup class="text-gray-500">*</sup>
+                            </label>
+                            <input class="w-full px-2 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400" 
+                                   id="details" name="details" placeholder="Search in details">
+                        </div>
+
+                        <!-- Server -->
+                        <div>
+                            <label class="block mb-1 text-xs text-gray-300" for="server">
+                                Server ID <sup class="text-gray-500">*</sup>
+                            </label>
+                            <input class="w-full px-2 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400" 
+                                   id="server" name="server" placeholder="3">
+                        </div>
+
+                        <!-- Minigames -->
+                        <div>
+                            <label class="block mb-1 text-xs text-gray-300" for="minigames">
+                                Minigames
+                            </label>
+                            <select class="w-full px-2 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white" 
+                                    id="minigames" name="minigames">
+                                <option value="">All</option>
+                                <option value="none">No Minigames</option>
+                            </select>
+                        </div>
+
+                        <!-- Date/Time Filters -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block mb-1 text-xs text-gray-300" for="after">After</label>
+                                <input type="datetime-local" class="w-full px-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-white" 
+                                       id="after" name="after">
+                            </div>
+                            <div>
+                                <label class="block mb-1 text-xs text-gray-300" for="before">Before</label>
+                                <input type="datetime-local" class="w-full px-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-white" 
+                                       id="before" name="before">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Search Button -->
+                    <div class="mt-4">
+                        <button type="submit" class="btn px-3 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded">
+                            <i class="fas fa-search mr-1"></i>
+                            Search
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="bg-gray-800 rounded-lg shadow-lg">
+            <div class="p-4">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-sm font-medium text-white">Logs</h2>
+                    <span class="text-xs text-gray-400" id="queryTime"></span>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="text-left border-b border-gray-700">
+                                <th class="p-2 pl-8 text-xs font-medium text-gray-300 w-[15%]">Player</th>
+                                <th class="p-2 text-xs font-medium text-gray-300 whitespace-nowrap w-[10%]">Server ID</th>
+                                <th class="p-2 text-xs font-medium text-gray-300 w-[25%]">Action</th>
+                                <th class="p-2 text-xs font-medium text-gray-300 w-[35%]">Details</th>
+                                <th class="p-2 pr-8 text-xs font-medium text-gray-300 w-[15%]">
+                                    <div class="flex items-center gap-1">
+                                        <span>Timestamp</span>
+                                        <select id="timezone" class="px-1.5 py-0.5 text-xs bg-gray-700 border border-gray-600 rounded text-white">
+                                            <option value="default">Default</option>
+                                            <option value="UTC">UTC (Universal)</option>
+                                            <option value="Europe/London">GMT/BST (British)</option>
+                                            <option value="America/New_York">EST/EDT (Eastern)</option>
+                                            <option value="America/Chicago">CST/CDT (Central)</option>
+                                            <option value="America/Denver">MST/MDT (Mountain)</option>
+                                            <option value="America/Los_Angeles">PST/PDT (Pacific)</option>
+                                            <option value="Europe/Paris">CET/CEST (Central European)</option>
+                                            <option value="Asia/Tokyo">JST (Japan)</option>
+                                            <option value="Australia/Sydney">AEST/AEDT (Australian Eastern)</option>
+                                            <option value="Asia/Kolkata">IST (India)</option>
+                                        </select>
+                                    </div>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="logsTableBody"></tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="mt-4 flex justify-between items-center">
+                    <button id="prevPage" class="btn px-2 py-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded">
+                        Previous
+                    </button>
+                    <span id="currentPage" class="text-xs text-white">Page 1</span>
+                    <button id="nextPage" class="btn px-2 py-1 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded">
+                        Next
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment-timezone/0.5.43/moment-timezone-with-data.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
