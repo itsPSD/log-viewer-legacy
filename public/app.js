@@ -44,7 +44,7 @@ document.getElementById('action').addEventListener('input', function(e) {
         } catch (error) {
             console.error('Error fetching actions:', error);
         }
-    }, 300); // Add debounce to prevent too many requests
+    }, 300);
 });
 
 document.getElementById('action').addEventListener('focus', function(e) {
@@ -68,17 +68,23 @@ function showActionSuggestions() {
     if (!suggestionsDiv) {
         suggestionsDiv = document.createElement('div');
         suggestionsDiv.id = 'action-suggestions';
-        suggestionsDiv.className = 'action-suggestions';
+        suggestionsDiv.className = 'action-suggestions absolute w-full bg-gray-700 mt-1 rounded-md shadow-lg z-50 max-h-48 overflow-y-auto';
         actionInput.parentNode.appendChild(suggestionsDiv);
     }
     
     if (actionSuggestions.length > 0) {
-        suggestionsDiv.innerHTML = actionSuggestions.map(action => `
-            <div class="action-suggestion" onclick="selectAction('${action.action}')">
-                ${action.action}
-                <span class="count">(${action.count})</span>
-            </div>
-        `).join('');
+        suggestionsDiv.innerHTML = '';
+        actionSuggestions.forEach(action => {
+            const div = document.createElement('div');
+            div.className = 'action-suggestion p-2 hover:bg-gray-600 cursor-pointer';
+            div.innerHTML = `${action.action}<span class="text-gray-400 text-sm ml-1">(${action.count})</span>`;
+            div.addEventListener('click', function() {
+                actionInput.value = action.action;
+                hideActionSuggestions();
+                handleSearch(new Event('submit'));
+            });
+            suggestionsDiv.appendChild(div);
+        });
         suggestionsDiv.style.display = 'block';
     } else {
         suggestionsDiv.style.display = 'none';
@@ -90,13 +96,6 @@ function hideActionSuggestions() {
     if (suggestionsDiv) {
         suggestionsDiv.style.display = 'none';
     }
-}
-
-function selectAction(action) {
-    const actionInput = document.getElementById('action');
-    actionInput.value = action;
-    hideActionSuggestions();
-    refreshLogs();
 }
 
 // Constants for action types
@@ -142,20 +141,28 @@ const DRUG_LOGS = [
 document.getElementById('drugLogsBtn').addEventListener('click', function() {
     const actionInput = document.getElementById('action');
     actionInput.value = DRUG_LOGS.map(action => `=${action}`).join('|');
-    refreshLogs();
+    handleSearch(new Event('submit'));
 });
 
 document.getElementById('moneyLogsBtn').addEventListener('click', function() {
     const actionInput = document.getElementById('action');
     actionInput.value = MONEY_TRANSFER_ACTIONS.map(action => `=${action}`).join('|');
-    refreshLogs();
+    handleSearch(new Event('submit'));
 });
 
 document.getElementById('connectLogsBtn').addEventListener('click', function() {
     const actionInput = document.getElementById('action');
     const allConnectionActions = [...CONNECT_ACTIONS, ...DISCONNECT_ACTIONS];
     actionInput.value = allConnectionActions.map(action => `=${action}`).join('|');
-    refreshLogs();
+    handleSearch(new Event('submit'));
+});
+
+// Prevent form submission on Enter key in action input
+document.getElementById('action').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSearch(new Event('submit'));
+    }
 });
 
 // Functions
@@ -295,7 +302,6 @@ function renderLogs(logs) {
         const metadata = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
         const colorClass = getLogColor(log.action, metadata);
         
-        // Apply color class directly with important flag
         row.className = `border-t border-gray-700 relative ${colorClass}`;
         
         const playerName = getPlayerName(log.details);
@@ -319,11 +325,20 @@ function renderLogs(logs) {
             <td class="p-2 text-xs text-white">${metadata?.playerServerId || '-'}</td>
             <td class="p-2 text-xs text-white">
                 ${log.action || '-'}
-                ${metadata ? `<i class="fas fa-info-circle ml-1 text-indigo-400 hover:text-indigo-300 cursor-pointer" onclick='showMetadata(${JSON.stringify(metadata)})'></i>` : ''}
+                ${metadata ? `<i class="fas fa-info-circle ml-1 text-indigo-400 hover:text-indigo-300 cursor-pointer metadata-btn" data-metadata='${JSON.stringify(metadata)}'></i>` : ''}
             </td>
             <td class="p-2 text-xs text-white">${formattedDetails || '-'}</td>
             <td class="p-2 text-xs text-white">${formatTimestamp(log.timestamp)}</td>
         `;
+
+        // Add event listeners after creating the row
+        const metadataBtn = row.querySelector('.metadata-btn');
+        if (metadataBtn) {
+            metadataBtn.addEventListener('click', function() {
+                const metadata = JSON.parse(this.dataset.metadata);
+                showMetadata(metadata);
+            });
+        }
         
         logsTableBody.appendChild(row);
     });
@@ -350,14 +365,14 @@ function showMetadata(metadata) {
         <div class="metadata-content">
             <div class="metadata-header">
                 <h2 class="text-white text-lg font-medium">Metadata</h2>
-                <button class="text-gray-400 hover:text-white" onclick="this.closest('.metadata-modal').remove()">
+                <button class="text-gray-400 hover:text-white close-metadata">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="metadata-items">
                 ${Object.entries(metadata).map(([key, value]) => `
                     <div class="metadata-item">
-                        <i class="fas fa-copy metadata-copy" onclick="navigator.clipboard.writeText(JSON.stringify(${JSON.stringify(value)}))"></i>
+                        <i class="fas fa-copy metadata-copy" data-value='${JSON.stringify(value)}'></i>
                         <div class="metadata-key">
                             <i class="fas fa-caret-right"></i>
                             ${key}
@@ -371,7 +386,20 @@ function showMetadata(metadata) {
     
     document.body.appendChild(modal);
     setTimeout(() => modal.classList.add('show'), 0);
-    
+
+    // Add click handlers for close button
+    modal.querySelector('.close-metadata').addEventListener('click', function() {
+        this.closest('.metadata-modal').remove();
+    });
+
+    // Add click handlers for copy buttons
+    modal.querySelectorAll('.metadata-copy').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const value = this.dataset.value;
+            navigator.clipboard.writeText(value);
+        });
+    });
+
     // Add click handlers for metadata items
     modal.querySelectorAll('.metadata-key').forEach(key => {
         const value = key.nextElementSibling;
