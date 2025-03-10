@@ -47,7 +47,7 @@ const dbConfig = {
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: 20, // Increase connection limit
     queueLimit: 0
 };
 
@@ -63,6 +63,29 @@ const pool = mysql.createPool(dbConfig);
     } catch (error) {
         console.error('Database connection failed:', error);
         process.exit(1);
+    }
+})();
+
+// Add indexes to the user_logs table
+(async () => {
+    try {
+        const connection = await pool.getConnection();
+        const queries = [
+            `CREATE INDEX IF NOT EXISTS idx_identifier ON user_logs (identifier)`,
+            `CREATE INDEX IF NOT EXISTS idx_action ON user_logs (action)`,
+            `CREATE INDEX IF NOT EXISTS idx_details ON user_logs (details)`,
+            `CREATE INDEX IF NOT EXISTS idx_metadata ON user_logs (metadata)`,
+            `CREATE INDEX IF NOT EXISTS idx_timestamp ON user_logs (timestamp)`
+        ];
+        
+        for (const query of queries) {
+            await connection.query(query);
+        }
+        
+        connection.release();
+        console.log('Indexes created successfully');
+    } catch (error) {
+        console.error('Failed to create indexes:', error);
     }
 })();
 
