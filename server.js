@@ -13,7 +13,7 @@ const moment = require('moment-timezone');
 const helmet = require('helmet');
 const compression = require('compression');
 
-// Production check
+
 const isProduction = process.env.NODE_ENV === 'production';
 
 const app = express();
@@ -126,14 +126,14 @@ app.use(session({
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    proxy: true, // Required for secure cookies behind proxy
+    proxy: true, 
     cookie: {
         secure: isProduction,
         httpOnly: true,
-        sameSite: 'lax', // Changed from strict to lax for better compatibility
+        sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000
     },
-    name: 'sessionId' // Custom session cookie name
+    name: 'sessionId'
 }));
 
 // Initialize passport
@@ -203,18 +203,28 @@ const authLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: 'Too many login attempts, please try again later.',
-    skipSuccessfulRequests: true // Don't count successful logins
+    skipSuccessfulRequests: true 
 });
 
-// Error handling middleware
+
+app.use((req, res, next) => {
+    req.startTime = Date.now();
+    console.log(`Request received: ${req.method} ${req.url}`);
+    next();
+});
+
+// Error  middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    if (isProduction) {
-        // Don't leak error details in production
-        res.status(500).json({ error: 'Internal Server Error' });
-    } else {
-        res.status(500).json({ error: err.message, stack: err.stack });
-    }
+    console.error(`Error processing request: ${req.method} ${req.url} - ${err.message}`);
+    res.status(500).send('Internal Server Error');
+});
+
+
+app.use((req, res, next) => {
+    res.on('finish', () => {
+        console.log(`Request completed: ${req.method} ${req.url} - ${res.statusCode} in ${Date.now() - req.startTime}ms`);
+    });
+    next();
 });
 
 // Production logging
@@ -320,9 +330,9 @@ app.get('/api/actions', async (req, res) => {
         
         const searchPattern = searchTerm ? `%${searchTerm}%` : '%';
         const params = [
-            searchPattern,    // For WHERE clause
-            searchTerm,       // For exact match in ORDER BY
-            `${searchTerm}%`  // For prefix match in ORDER BY
+            searchPattern,    
+            searchTerm,       
+            `${searchTerm}%`  
         ];
         
         const [rows] = await connection.execute(query, params);
