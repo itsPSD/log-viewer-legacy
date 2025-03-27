@@ -233,8 +233,9 @@ function formatLicense(text) {
     
     // Handle both license: format and direct hex format
     return text.replace(/(?:license:)?([a-f0-9]{32,})/gi, (match, license) => {
+        const fullLicense = match.startsWith('license:') ? match : `license:${license}`;
         const truncated = `${license.slice(0, 4)}...${license.slice(-4)}`;
-        return `<span class="license-text" title="Click to copy full license" data-license="${license}">${truncated}</span>`;
+        return `<span class="license-text" title="Click to copy full license" data-license="${fullLicense}">${truncated}</span>`;
     });
 }
 
@@ -305,6 +306,8 @@ function renderLogs(logs) {
         row.className = `border-t border-gray-700 relative ${colorClass}`;
         
         const playerName = getPlayerName(log.details);
+        const licenseMatch = log.details.match(/(license:[a-f0-9]{32,})/);
+        const license = licenseMatch ? licenseMatch[0] : null;
         const formattedDetails = highlightBackticks(formatLicense(log.details));
         const logTag = getLogTag(log.action, metadata);
         
@@ -312,8 +315,8 @@ function renderLogs(logs) {
             <td class="p-2 pl-8">
                 <div class="absolute top-2 left-2 text-sm leading-3 font-semibold italic">${logTag}</div>
                 <div class="player-box">
-                    ${playerName ? 
-                        `<div class="px-2 py-1 text-xs font-medium text-center text-white bg-indigo-600 hover:bg-indigo-700 rounded truncate">
+                    ${playerName && license ? 
+                        `<div class="px-2 py-1 text-xs font-medium text-center text-white bg-indigo-600 hover:bg-indigo-700 rounded truncate cursor-pointer player-link" data-license="${license}">
                             ${playerName}
                         </div>` : 
                         `<div class="px-2 py-1 text-xs font-medium text-center text-white bg-teal-600 hover:bg-teal-700 rounded truncate">
@@ -337,6 +340,17 @@ function renderLogs(logs) {
             metadataBtn.addEventListener('click', function() {
                 const metadata = JSON.parse(this.dataset.metadata);
                 showMetadata(metadata);
+            });
+        }
+
+        // Add click handler for player name link
+        const playerLink = row.querySelector('.player-link');
+        if (playerLink && playerLink.dataset.license) {
+            playerLink.addEventListener('click', function() {
+                const license = this.dataset.license;
+                if (license) {
+                    window.open(`https://c8.lrp.ovh/players/${license}`, '_blank');
+                }
             });
         }
         
