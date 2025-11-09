@@ -53,20 +53,25 @@
                         <!-- Action -->
                         <div class="relative">
                             <label for="action" class="block text-xs font-medium text-gray-300 mb-1">Action</label>
-                            <div class="flex gap-2 items-center">
+                            <div class="flex gap-2 items-stretch">
                                 <div class="relative flex-grow">
-                                    <input type="text" id="action" name="action" class="w-full px-3 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white" placeholder="Filter by action...">
+                                    <input type="text" id="action" name="action" class="w-full h-full px-3 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400" placeholder="Filter by action...">
                                     <!-- Suggestions will be appended here -->
                                 </div>
-                                <button type="button" id="drugLogsBtn" class="btn px-2 py-1 text-xs font-medium text-white bg-yellow-600 hover:bg-yellow-700 rounded" title="Drug Logs">
-                                    <i class="fas fa-pills"></i>
-                                </button>
-                                <button type="button" id="moneyLogsBtn" class="btn px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded" title="Money Logs">
-                                    <i class="fas fa-money-bill-wave"></i>
-                                </button>
-                                <button type="button" id="connectLogsBtn" class="btn px-2 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded" title="Connection Logs">
-                                    <i class="fas fa-network-wired"></i>
-                                </button>
+                                <div class="flex gap-2 items-center">
+                                    <button type="button" id="drugLogsBtn" class="btn px-2.5 py-1.5 text-xs font-medium text-white bg-yellow-600 hover:bg-yellow-700 rounded flex items-center justify-center h-full min-h-[2.25rem]" title="Drug Logs">
+                                        <i class="fas fa-pills"></i>
+                                    </button>
+                                    <button type="button" id="moneyLogsBtn" class="btn px-2.5 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded flex items-center justify-center h-full min-h-[2.25rem]" title="Money Logs">
+                                        <i class="fas fa-money-bill-wave"></i>
+                                    </button>
+                                    <button type="button" id="savingsLogsBtn" class="btn px-2.5 py-1.5 text-xs font-medium text-white bg-purple-600 hover:bg-purple-700 rounded flex items-center justify-center h-full min-h-[2.25rem]" title="Savings Logs">
+                                        <i class="fas fa-piggy-bank"></i>
+                                    </button>
+                                    <button type="button" id="connectLogsBtn" class="btn px-2.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded flex items-center justify-center h-full min-h-[2.25rem]" title="Connection Logs">
+                                        <i class="fas fa-network-wired"></i>
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -76,7 +81,7 @@
                                 Details <sup class="text-gray-500">*</sup>
                             </label>
                             <input class="w-full px-2 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400" 
-                                   id="details" name="details" placeholder="Search in details">
+                                   id="details" name="details" placeholder="Min 3 chars (use with other filters for best results)">
                         </div>
 
                         <!-- Server -->
@@ -138,11 +143,12 @@
                     <table class="w-full">
                         <thead>
                             <tr class="text-left border-b border-gray-700">
-                                <th class="p-2 pl-8 text-xs font-medium text-gray-300 w-[15%]">Player</th>
-                                <th class="p-2 text-xs font-medium text-gray-300 whitespace-nowrap w-[10%]">Server ID</th>
-                                <th class="p-2 text-xs font-medium text-gray-300 w-[25%]">Action</th>
-                                <th class="p-2 text-xs font-medium text-gray-300 w-[35%]">Details</th>
-                                <th class="p-2 pr-8 text-xs font-medium text-gray-300 w-[15%]">
+                                <th class="p-2 pl-8 text-xs font-medium text-gray-300 w-[12%]">Player</th>
+                                <th class="p-2 text-xs font-medium text-gray-300 whitespace-nowrap w-[8%]">Server ID</th>
+                                <th class="p-2 text-xs font-medium text-gray-300 w-[10%]">Character</th>
+                                <th class="p-2 text-xs font-medium text-gray-300 w-[22%]">Action</th>
+                                <th class="p-2 text-xs font-medium text-gray-300 w-[28%]">Details</th>
+                                <th class="p-2 pr-8 text-xs font-medium text-gray-300 w-[20%]">
                                     <div class="flex items-center gap-1">
                                         <span>Timestamp</span>
                                         <select id="timezone" class="px-1.5 py-0.5 text-xs bg-gray-700 border border-gray-600 rounded text-white">

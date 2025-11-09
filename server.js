@@ -84,7 +84,10 @@ const pool = mysql.createPool(dbConfig);
             `CREATE INDEX IF NOT EXISTS idx_identifier_action ON user_logs (identifier, action)`,
             `CREATE INDEX IF NOT EXISTS idx_identifier_timestamp ON user_logs (identifier, timestamp DESC)`,
             `CREATE INDEX IF NOT EXISTS idx_action_timestamp ON user_logs (action, timestamp DESC)`,
-            `CREATE INDEX IF NOT EXISTS idx_identifier_action_timestamp ON user_logs (identifier, action, timestamp DESC)`
+            `CREATE INDEX IF NOT EXISTS idx_identifier_action_timestamp ON user_logs (identifier, action, timestamp DESC)`,
+            // Composite indexes for details searches with other filters
+            `CREATE INDEX IF NOT EXISTS idx_identifier_details ON user_logs (identifier, details(100))`,
+            `CREATE INDEX IF NOT EXISTS idx_action_details ON user_logs (action, details(100))`
         ];
         
         for (const query of queries) {
@@ -480,19 +483,32 @@ app.get('/api/logs', async (req, res) => {
             }
         }
 
-        // Optimize details filter - use prefix matching when possible
+        // Optimize details filter - require minimum length and prefer prefix matching
         if (req.query.details) {
             const detailsValue = validateInput(req.query.details, 500);
-            if (detailsValue.length > 0) {
-                // If details is a reasonable length and doesn't need wildcard search, use prefix
-                if (detailsValue.length > 5 && !detailsValue.includes(' ')) {
-                    // Use prefix matching for better index usage
+            // Require minimum 3 characters to avoid very expensive short searches
+            if (detailsValue.length >= 3) {
+                // Try to use prefix matching when possible (much faster with index)
+                // Only use full wildcard search if we have other filters to narrow it down
+                const hasOtherFilters = req.query.identifier || req.query.action || req.query.server || req.query.before || req.query.after;
+                
+                if (detailsValue.length >= 4 && !detailsValue.includes(' ') && !detailsValue.includes('%')) {
+                    // Use prefix matching for better index usage (fastest)
                     query += ' AND details LIKE ?';
                     params.push(`${detailsValue}%`);
-                } else {
-                    // Fall back to full LIKE for complex searches
+                } else if (hasOtherFilters) {
+                    // Only use full wildcard if we have other filters to narrow results
+                    // This prevents full table scans
                     query += ' AND details LIKE ?';
                     params.push(`%${detailsValue}%`);
+                } else {
+                    // For full wildcard without other filters, require longer search term
+                    // to reduce the search space
+                    if (detailsValue.length >= 6) {
+                        query += ' AND details LIKE ?';
+                        params.push(`%${detailsValue}%`);
+                    }
+                    // If too short and no other filters, skip details filter to prevent timeout
                 }
             }
         }

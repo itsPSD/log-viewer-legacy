@@ -197,10 +197,20 @@ const DRUG_LOGS = [
     "Crafted Gun"
 ];
 
+const SAVINGS_ACTIONS = [
+    "Savings Create Account",
+    "Savings Delete Account",
+    "Savings Add Access",
+    "Savings Remove Access",
+    "Savings Deposit",
+    "Savings Withdraw"
+];
+
 // Quick filter buttons
 const drugLogsBtn = document.getElementById('drugLogsBtn');
 const moneyLogsBtn = document.getElementById('moneyLogsBtn');
 const connectLogsBtn = document.getElementById('connectLogsBtn');
+const savingsLogsBtn = document.getElementById('savingsLogsBtn');
 
 if (drugLogsBtn && actionInput) {
     drugLogsBtn.addEventListener('click', function() {
@@ -220,6 +230,13 @@ if (connectLogsBtn && actionInput) {
     connectLogsBtn.addEventListener('click', function() {
         const allConnectionActions = [...CONNECT_ACTIONS, ...DISCONNECT_ACTIONS];
         actionInput.value = allConnectionActions.map(action => `=${action}`).join('|');
+        handleSearch(new Event('submit'));
+    });
+}
+
+if (savingsLogsBtn && actionInput) {
+    savingsLogsBtn.addEventListener('click', function() {
+        actionInput.value = SAVINGS_ACTIONS.map(action => `=${action}`).join('|');
         handleSearch(new Event('submit'));
     });
 }
@@ -407,7 +424,7 @@ function renderLogs(logs) {
     if (!logs || logs.length === 0) {
         const row = document.createElement('tr');
         row.className = 'border-t border-gray-700';
-        row.innerHTML = '<td colspan="5" class="p-4 text-center text-gray-400 text-xs">No logs found</td>';
+        row.innerHTML = '<td colspan="6" class="p-4 text-center text-gray-400 text-xs">No logs found</td>';
         logsTableBody.appendChild(row);
         return;
     }
@@ -434,6 +451,7 @@ function renderLogs(logs) {
         const logTag = getLogTag(log.action || '', metadata);
         const actionText = escapeHtml(log.action || '-');
         const serverId = escapeHtml(metadata?.playerServerId || '-');
+        const characterId = metadata?.characterId || null;
         
         // Safely escape metadata for data attribute
         let metadataAttr = '';
@@ -443,6 +461,22 @@ function renderLogs(logs) {
             } catch (e) {
                 console.error('Error stringifying metadata:', e);
             }
+        }
+        
+        // Build character cell - only show if characterId exists and license exists
+        let characterCell = '<td class="p-2 text-xs text-white">-</td>';
+        if (characterId && license) {
+            const safeLicense = escapeHtml(license);
+            const safeCharacterId = escapeHtml(String(characterId));
+            characterCell = `
+                <td class="p-2 text-xs text-white">
+                    <div class="px-2 py-1 text-xs font-medium text-center text-white bg-purple-600 hover:bg-purple-700 rounded truncate cursor-pointer character-link" 
+                         data-license="${safeLicense}" 
+                         data-character-id="${safeCharacterId}">
+                        ${safeCharacterId}
+                    </div>
+                </td>
+            `;
         }
         
         row.innerHTML = `
@@ -460,6 +494,7 @@ function renderLogs(logs) {
                 </div>
             </td>
             <td class="p-2 text-xs text-white">${serverId}</td>
+            ${characterCell}
             <td class="p-2 text-xs text-white">
                 ${actionText}
                 ${metadataAttr ? `<i class="fas fa-info-circle ml-1 text-indigo-400 hover:text-indigo-300 cursor-pointer metadata-btn" data-metadata='${metadataAttr}'></i>` : ''}
@@ -489,6 +524,23 @@ function renderLogs(logs) {
                     }
                     // Open player page with the license in the URL
                     window.open(`https://c8.lrp.ovh/players/${license}`, '_blank');
+                }
+            });
+        }
+
+        // Add click handler for character link
+        const characterLink = row.querySelector('.character-link');
+        if (characterLink && characterLink.dataset.license && characterLink.dataset.characterId) {
+            characterLink.addEventListener('click', function() {
+                let license = this.dataset.license;
+                const characterId = this.dataset.characterId;
+                if (license && characterId) {
+                    // Ensure license has the 'license:' prefix
+                    if (!license.startsWith('license:')) {
+                        license = `license:${license}`;
+                    }
+                    // Open character page with the license and characterId in the URL
+                    window.open(`https://c8.lrp.ovh/players/${license}/characters/${characterId}`, '_blank');
                 }
             });
         }
