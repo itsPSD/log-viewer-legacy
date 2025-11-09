@@ -2,8 +2,10 @@ let currentPage = 1;
 let selectedTimezone = 'default';
 let actionSuggestions = [];
 let actionSearchTimeout = null;
+let currentAbortController = null;
+let isLoading = false;
 
-// DOM Elements
+// DOM Elements - cache them
 const searchForm = document.getElementById('searchForm');
 const logsTableBody = document.getElementById('logsTableBody');
 const prevPageBtn = document.getElementById('prevPage');
@@ -13,46 +15,102 @@ const refreshButton = document.getElementById('refreshButton');
 const timezoneSelect = document.getElementById('timezone');
 const queryTimeSpan = document.getElementById('queryTime');
 
-// Event Listeners
-searchForm.addEventListener('submit', handleSearch);
-refreshButton.addEventListener('click', refreshLogs);
-prevPageBtn.addEventListener('click', () => changePage(-1));
-nextPageBtn.addEventListener('click', () => changePage(1));
+// Utility function to escape HTML and prevent XSS
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Utility function to safely set innerHTML with escaped content
+function safeSetInnerHTML(element, html) {
+    if (!element) return;
+    element.innerHTML = html;
+}
+
+// Event Listeners - with null checks
+if (searchForm) {
+    searchForm.addEventListener('submit', handleSearch);
+}
+if (refreshButton) {
+    refreshButton.addEventListener('click', refreshLogs);
+}
+if (prevPageBtn) {
+    prevPageBtn.addEventListener('click', () => changePage(-1));
+}
+if (nextPageBtn) {
+    nextPageBtn.addEventListener('click', () => changePage(1));
+}
 
 // Update timezone change handler
-document.getElementById('timezone').addEventListener('change', function(e) {
-    selectedTimezone = e.target.value;
-    // Store the preference
-    localStorage.setItem('preferredTimezone', selectedTimezone);
-    // Refresh the display
-    refreshLogs();
-});
+if (timezoneSelect) {
+    timezoneSelect.addEventListener('change', function(e) {
+        selectedTimezone = e.target.value;
+        // Store the preference
+        localStorage.setItem('preferredTimezone', selectedTimezone);
+        // Refresh the display
+        refreshLogs();
+    });
+}
 
 // Action search functionality
-document.getElementById('action').addEventListener('input', function(e) {
+const actionInput = document.getElementById('action');
+let actionAbortController = null;
+
+if (actionInput) {
+    actionInput.addEventListener('input', function(e) {
     clearTimeout(actionSearchTimeout);
+    
+    // Cancel previous request
+    if (actionAbortController) {
+        actionAbortController.abort();
+    }
+    
     const search = e.target.value.trim();
     
+    if (search.length === 0) {
+        hideActionSuggestions();
+        return;
+    }
+    
     actionSearchTimeout = setTimeout(async () => {
+        actionAbortController = new AbortController();
+        
         try {
-            const response = await fetch(`/api/actions?search=${encodeURIComponent(search)}`);
-            if (!response.ok) throw new Error('Failed to fetch actions');
+            const response = await fetch(`/api/actions?search=${encodeURIComponent(search)}`, {
+                signal: actionAbortController.signal
+            });
+            
+            if (!response.ok) {
+                if (response.status === 504) {
+                    console.warn('Action search timeout');
+                } else {
+                    throw new Error('Failed to fetch actions');
+                }
+                return;
+            }
             
             const data = await response.json();
-            actionSuggestions = data;
+            actionSuggestions = Array.isArray(data) ? data : [];
             showActionSuggestions();
         } catch (error) {
-            console.error('Error fetching actions:', error);
+            if (error.name !== 'AbortError') {
+                console.error('Error fetching actions:', error);
+            }
+        } finally {
+            actionAbortController = null;
         }
     }, 300);
-});
+    });
 
-document.getElementById('action').addEventListener('focus', function(e) {
-    const search = e.target.value.trim();
-    if (search.length > 0) {
-        showActionSuggestions();
-    }
-});
+    actionInput.addEventListener('focus', function(e) {
+        const search = e.target.value.trim();
+        if (search.length > 0) {
+            showActionSuggestions();
+        }
+    });
+}
 
 // Close suggestions when clicking outside
 document.addEventListener('click', function(e) {
@@ -62,7 +120,6 @@ document.addEventListener('click', function(e) {
 });
 
 function showActionSuggestions() {
-    const actionInput = document.getElementById('action');
     let suggestionsDiv = document.getElementById('action-suggestions');
     
     if (!suggestionsDiv) {
@@ -77,7 +134,10 @@ function showActionSuggestions() {
         actionSuggestions.forEach(action => {
             const div = document.createElement('div');
             div.className = 'action-suggestion p-2 hover:bg-gray-600 cursor-pointer';
-            div.innerHTML = `${action.action}<span class="text-gray-400 text-sm ml-1">(${action.count})</span>`;
+            // Escape HTML to prevent XSS
+            const actionText = escapeHtml(action.action || '');
+            const count = action.count || 0;
+            div.innerHTML = `${actionText}<span class="text-gray-400 text-sm ml-1">(${count})</span>`;
             div.addEventListener('click', function() {
                 actionInput.value = action.action;
                 hideActionSuggestions();
@@ -138,49 +198,72 @@ const DRUG_LOGS = [
 ];
 
 // Quick filter buttons
-document.getElementById('drugLogsBtn').addEventListener('click', function() {
-    const actionInput = document.getElementById('action');
-    actionInput.value = DRUG_LOGS.map(action => `=${action}`).join('|');
-    handleSearch(new Event('submit'));
-});
+const drugLogsBtn = document.getElementById('drugLogsBtn');
+const moneyLogsBtn = document.getElementById('moneyLogsBtn');
+const connectLogsBtn = document.getElementById('connectLogsBtn');
 
-document.getElementById('moneyLogsBtn').addEventListener('click', function() {
-    const actionInput = document.getElementById('action');
-    actionInput.value = MONEY_TRANSFER_ACTIONS.map(action => `=${action}`).join('|');
-    handleSearch(new Event('submit'));
-});
+if (drugLogsBtn && actionInput) {
+    drugLogsBtn.addEventListener('click', function() {
+        actionInput.value = DRUG_LOGS.map(action => `=${action}`).join('|');
+        handleSearch(new Event('submit'));
+    });
+}
 
-document.getElementById('connectLogsBtn').addEventListener('click', function() {
-    const actionInput = document.getElementById('action');
-    const allConnectionActions = [...CONNECT_ACTIONS, ...DISCONNECT_ACTIONS];
-    actionInput.value = allConnectionActions.map(action => `=${action}`).join('|');
-    handleSearch(new Event('submit'));
-});
+if (moneyLogsBtn && actionInput) {
+    moneyLogsBtn.addEventListener('click', function() {
+        actionInput.value = MONEY_TRANSFER_ACTIONS.map(action => `=${action}`).join('|');
+        handleSearch(new Event('submit'));
+    });
+}
+
+if (connectLogsBtn && actionInput) {
+    connectLogsBtn.addEventListener('click', function() {
+        const allConnectionActions = [...CONNECT_ACTIONS, ...DISCONNECT_ACTIONS];
+        actionInput.value = allConnectionActions.map(action => `=${action}`).join('|');
+        handleSearch(new Event('submit'));
+    });
+}
 
 // Prevent form submission on Enter key in action input
-document.getElementById('action').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        e.preventDefault();
-        handleSearch(new Event('submit'));
-    }
-});
+if (actionInput) {
+    actionInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleSearch(new Event('submit'));
+        }
+    });
+}
 
 // Functions
 async function fetchLogs(params = {}) {
+    // Cancel previous request if still pending
+    if (currentAbortController) {
+        currentAbortController.abort();
+    }
+    
+    currentAbortController = new AbortController();
     const queryParams = new URLSearchParams();
     
     // Add page parameter
     queryParams.append('page', currentPage);
 
-    // Add filters
+    // Add filters - get elements once
+    const identifierEl = document.getElementById('identifier');
+    const actionEl = document.getElementById('action');
+    const detailsEl = document.getElementById('details');
+    const serverEl = document.getElementById('server');
+    const minigamesEl = document.getElementById('minigames');
+    const beforeEl = document.getElementById('before');
+    const afterEl = document.getElementById('after');
+    
     const filters = {
-        identifier: document.getElementById('identifier').value.trim(),
-        action: document.getElementById('action').value.trim(),
-        details: document.getElementById('details').value.trim(),
-        server: document.getElementById('server').value.trim(),
-        minigames: document.getElementById('minigames').value,
-        before: document.getElementById('before').value ? Math.floor(new Date(document.getElementById('before').value).getTime() / 1000) : '',
-        after: document.getElementById('after').value ? Math.floor(new Date(document.getElementById('after').value).getTime() / 1000) : ''
+        identifier: identifierEl ? identifierEl.value.trim() : '',
+        action: actionEl ? actionEl.value.trim() : '',
+        details: detailsEl ? detailsEl.value.trim() : '',
+        server: serverEl ? serverEl.value.trim() : '',
+        minigames: minigamesEl ? minigamesEl.value : '',
+        before: beforeEl && beforeEl.value ? Math.floor(new Date(beforeEl.value).getTime() / 1000) : '',
+        after: afterEl && afterEl.value ? Math.floor(new Date(afterEl.value).getTime() / 1000) : ''
     };
 
     // Add non-empty filters to query params
@@ -191,13 +274,34 @@ async function fetchLogs(params = {}) {
     });
 
     try {
-        const response = await fetch(`/api/logs?${queryParams}`);
-        if (!response.ok) throw new Error('Failed to fetch logs');
+        const response = await fetch(`/api/logs?${queryParams}`, {
+            signal: currentAbortController.signal
+        });
+        
+        if (!response.ok) {
+            if (response.status === 504) {
+                throw new Error('Query timeout - try refining your search filters');
+            } else if (response.status === 429) {
+                throw new Error('Too many requests - please wait a moment');
+            } else if (response.status === 401) {
+                throw new Error('Unauthorized - please refresh and login again');
+            } else {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Failed to fetch logs');
+            }
+        }
+        
         const data = await response.json();
         return data;
     } catch (error) {
+        if (error.name === 'AbortError') {
+            // Request was cancelled, return empty to prevent error display
+            return { logs: [], page: 1, cancelled: true };
+        }
         console.error('Error fetching logs:', error);
-        return { logs: [], page: 1 };
+        throw error; // Re-throw to be handled by caller
+    } finally {
+        currentAbortController = null;
     }
 }
 
@@ -296,28 +400,58 @@ function getPlayerName(details) {
 }
 
 function renderLogs(logs) {
+    if (!logsTableBody) return;
+    
     logsTableBody.innerHTML = '';
+    
+    if (!logs || logs.length === 0) {
+        const row = document.createElement('tr');
+        row.className = 'border-t border-gray-700';
+        row.innerHTML = '<td colspan="5" class="p-4 text-center text-gray-400 text-xs">No logs found</td>';
+        logsTableBody.appendChild(row);
+        return;
+    }
     
     logs.forEach(log => {
         const row = document.createElement('tr');
-        const metadata = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
-        const colorClass = getLogColor(log.action, metadata);
+        let metadata;
+        try {
+            metadata = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : (log.metadata || {});
+        } catch (e) {
+            console.error('Error parsing metadata:', e);
+            metadata = {};
+        }
+        
+        const colorClass = getLogColor(log.action || '', metadata);
         
         row.className = `border-t border-gray-700 relative ${colorClass}`;
         
-        const playerName = getPlayerName(log.details);
-        const licenseMatch = log.details.match(/(license:[a-f0-9]{32,})/);
+        const details = log.details || '';
+        const playerName = getPlayerName(details);
+        const licenseMatch = details.match(/(license:[a-f0-9]{32,})/);
         const license = licenseMatch ? licenseMatch[0] : null;
-        const formattedDetails = highlightBackticks(formatLicense(log.details));
-        const logTag = getLogTag(log.action, metadata);
+        const formattedDetails = highlightBackticks(formatLicense(details));
+        const logTag = getLogTag(log.action || '', metadata);
+        const actionText = escapeHtml(log.action || '-');
+        const serverId = escapeHtml(metadata?.playerServerId || '-');
+        
+        // Safely escape metadata for data attribute
+        let metadataAttr = '';
+        if (metadata && Object.keys(metadata).length > 0) {
+            try {
+                metadataAttr = escapeHtml(JSON.stringify(metadata));
+            } catch (e) {
+                console.error('Error stringifying metadata:', e);
+            }
+        }
         
         row.innerHTML = `
             <td class="p-2 pl-8">
                 <div class="absolute top-2 left-2 text-sm leading-3 font-semibold italic">${logTag}</div>
                 <div class="player-box">
                     ${playerName && license ? 
-                        `<div class="px-2 py-1 text-xs font-medium text-center text-white bg-indigo-600 hover:bg-indigo-700 rounded truncate cursor-pointer player-link" data-license="${license}">
-                            ${playerName}
+                        `<div class="px-2 py-1 text-xs font-medium text-center text-white bg-indigo-600 hover:bg-indigo-700 rounded truncate cursor-pointer player-link" data-license="${escapeHtml(license)}">
+                            ${escapeHtml(playerName)}
                         </div>` : 
                         `<div class="px-2 py-1 text-xs font-medium text-center text-white bg-teal-600 hover:bg-teal-700 rounded truncate">
                             System
@@ -325,10 +459,10 @@ function renderLogs(logs) {
                     }
                 </div>
             </td>
-            <td class="p-2 text-xs text-white">${metadata?.playerServerId || '-'}</td>
+            <td class="p-2 text-xs text-white">${serverId}</td>
             <td class="p-2 text-xs text-white">
-                ${log.action || '-'}
-                ${metadata ? `<i class="fas fa-info-circle ml-1 text-indigo-400 hover:text-indigo-300 cursor-pointer metadata-btn" data-metadata='${JSON.stringify(metadata)}'></i>` : ''}
+                ${actionText}
+                ${metadataAttr ? `<i class="fas fa-info-circle ml-1 text-indigo-400 hover:text-indigo-300 cursor-pointer metadata-btn" data-metadata='${metadataAttr}'></i>` : ''}
             </td>
             <td class="p-2 text-xs text-white">${formattedDetails || '-'}</td>
             <td class="p-2 text-xs text-white">${formatTimestamp(log.timestamp)}</td>
@@ -347,8 +481,13 @@ function renderLogs(logs) {
         const playerLink = row.querySelector('.player-link');
         if (playerLink && playerLink.dataset.license) {
             playerLink.addEventListener('click', function() {
-                const license = this.dataset.license;
+                let license = this.dataset.license;
                 if (license) {
+                    // Ensure license has the 'license:' prefix
+                    if (!license.startsWith('license:')) {
+                        license = `license:${license}`;
+                    }
+                    // Open player page with the license in the URL
                     window.open(`https://c8.lrp.ovh/players/${license}`, '_blank');
                 }
             });
@@ -373,8 +512,44 @@ function renderLogs(logs) {
 }
 
 function showMetadata(metadata) {
+    if (!metadata || typeof metadata !== 'object') {
+        console.error('Invalid metadata provided');
+        return;
+    }
+    
     const modal = document.createElement('div');
     modal.className = 'metadata-modal';
+    
+    // Safely build HTML with escaped content
+    const metadataItems = Object.entries(metadata).map(([key, value]) => {
+        const safeKey = escapeHtml(key);
+        let safeValue;
+        try {
+            safeValue = escapeHtml(JSON.stringify(value, null, 2));
+        } catch (e) {
+            safeValue = escapeHtml(String(value));
+        }
+        
+        // Escape the JSON for data attribute
+        let dataValue;
+        try {
+            dataValue = escapeHtml(JSON.stringify(value));
+        } catch (e) {
+            dataValue = escapeHtml(String(value));
+        }
+        
+        return `
+            <div class="metadata-item">
+                <i class="fas fa-copy metadata-copy" data-value='${dataValue}'></i>
+                <div class="metadata-key">
+                    <i class="fas fa-caret-right"></i>
+                    ${safeKey}
+                </div>
+                <pre class="metadata-value">${safeValue}</pre>
+            </div>
+        `;
+    }).join('');
+    
     modal.innerHTML = `
         <div class="metadata-content">
             <div class="metadata-header">
@@ -384,16 +559,7 @@ function showMetadata(metadata) {
                 </button>
             </div>
             <div class="metadata-items">
-                ${Object.entries(metadata).map(([key, value]) => `
-                    <div class="metadata-item">
-                        <i class="fas fa-copy metadata-copy" data-value='${JSON.stringify(value)}'></i>
-                        <div class="metadata-key">
-                            <i class="fas fa-caret-right"></i>
-                            ${key}
-                        </div>
-                        <pre class="metadata-value">${JSON.stringify(value, null, 2)}</pre>
-                    </div>
-                `).join('')}
+                ${metadataItems}
             </div>
         </div>
     `;
@@ -402,15 +568,25 @@ function showMetadata(metadata) {
     setTimeout(() => modal.classList.add('show'), 0);
 
     // Add click handlers for close button
-    modal.querySelector('.close-metadata').addEventListener('click', function() {
-        this.closest('.metadata-modal').remove();
-    });
+    const closeBtn = modal.querySelector('.close-metadata');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function() {
+            const modalElement = this.closest('.metadata-modal');
+            if (modalElement) {
+                modalElement.remove();
+            }
+        });
+    }
 
     // Add click handlers for copy buttons
     modal.querySelectorAll('.metadata-copy').forEach(btn => {
         btn.addEventListener('click', function() {
             const value = this.dataset.value;
-            navigator.clipboard.writeText(value);
+            if (value && navigator.clipboard) {
+                navigator.clipboard.writeText(value).catch(err => {
+                    console.error('Failed to copy to clipboard:', err);
+                });
+            }
         });
     });
 
@@ -418,13 +594,15 @@ function showMetadata(metadata) {
     modal.querySelectorAll('.metadata-key').forEach(key => {
         const value = key.nextElementSibling;
         const caret = key.querySelector('.fas');
-        key.addEventListener('click', () => {
-            value.style.display = value.style.display === 'none' ? 'block' : 'none';
-            caret.classList.toggle('fa-caret-right');
-            caret.classList.toggle('fa-caret-down');
-        });
-        // Initially hide the values
-        value.style.display = 'none';
+        if (value && caret) {
+            key.addEventListener('click', () => {
+                value.style.display = value.style.display === 'none' ? 'block' : 'none';
+                caret.classList.toggle('fa-caret-right');
+                caret.classList.toggle('fa-caret-down');
+            });
+            // Initially hide the values
+            value.style.display = 'none';
+        }
     });
 }
 
@@ -435,24 +613,71 @@ async function handleSearch(e) {
 }
 
 async function refreshLogs() {
-    const formData = new FormData(searchForm);
-    const params = Object.fromEntries(formData.entries());
+    if (isLoading) return; // Prevent concurrent requests
     
-    // Convert datetime-local to timestamps
-    if (params.after) {
-        params.after = Math.floor(new Date(params.after).getTime() / 1000);
-    }
-    if (params.before) {
-        params.before = Math.floor(new Date(params.before).getTime() / 1000);
+    isLoading = true;
+    
+    // Show loading state
+    if (logsTableBody) {
+        logsTableBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-400 text-xs">Loading...</td></tr>';
     }
     
-    const data = await fetchLogs(params);
-    renderLogs(data.logs);
-    currentPageSpan.textContent = `Page ${currentPage}`;
+    if (queryTimeSpan) {
+        queryTimeSpan.textContent = 'Loading...';
+    }
     
-    // Display query time from server
-    if (data.queryTime !== undefined) {
-        queryTimeSpan.textContent = `Query took ${data.queryTime}ms`;
+    // Disable buttons during load
+    if (prevPageBtn) prevPageBtn.disabled = true;
+    if (nextPageBtn) nextPageBtn.disabled = true;
+    if (refreshButton) refreshButton.disabled = true;
+    
+    try {
+        const formData = searchForm ? new FormData(searchForm) : new FormData();
+        const params = Object.fromEntries(formData.entries());
+        
+        // Convert datetime-local to timestamps
+        if (params.after) {
+            params.after = Math.floor(new Date(params.after).getTime() / 1000);
+        }
+        if (params.before) {
+            params.before = Math.floor(new Date(params.before).getTime() / 1000);
+        }
+        
+        const data = await fetchLogs(params);
+        
+        // Check if request was cancelled
+        if (data.cancelled) {
+            return;
+        }
+        
+        renderLogs(data.logs || []);
+        
+        if (currentPageSpan) {
+            currentPageSpan.textContent = `Page ${currentPage}`;
+        }
+        
+        // Display query time from server
+        if (queryTimeSpan && data.queryTime !== undefined) {
+            queryTimeSpan.textContent = `Query took ${data.queryTime}ms`;
+        }
+    } catch (error) {
+        console.error('Error refreshing logs:', error);
+        
+        // Show error message
+        if (logsTableBody) {
+            logsTableBody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-red-400 text-xs">Error: ${escapeHtml(error.message || 'Failed to load logs')}</td></tr>`;
+        }
+        
+        if (queryTimeSpan) {
+            queryTimeSpan.textContent = 'Error';
+        }
+    } finally {
+        isLoading = false;
+        
+        // Re-enable buttons
+        if (prevPageBtn) prevPageBtn.disabled = false;
+        if (nextPageBtn) nextPageBtn.disabled = false;
+        if (refreshButton) refreshButton.disabled = false;
     }
 }
 
@@ -486,7 +711,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-document.getElementById('minigames').addEventListener('change', function() {
-    currentPage = 1;
-    refreshLogs();
-});
+const minigamesSelect = document.getElementById('minigames');
+if (minigamesSelect) {
+    minigamesSelect.addEventListener('change', function() {
+        currentPage = 1;
+        refreshLogs();
+    });
+}

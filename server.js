@@ -48,7 +48,10 @@ const dbConfig = {
     database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 20, // Increase connection limit
-    queueLimit: 0
+    queueLimit: 0,
+    connectTimeout: 10000, // 10 seconds connection timeout
+    acquireTimeout: 10000, // 10 seconds acquire timeout
+    timeout: 30000 // 30 seconds query timeout
 };
 
 // Create database connection pool
@@ -71,11 +74,17 @@ const pool = mysql.createPool(dbConfig);
     try {
         const connection = await pool.getConnection();
         const queries = [
+            // Single column indexes
             `CREATE INDEX IF NOT EXISTS idx_identifier ON user_logs (identifier)`,
             `CREATE INDEX IF NOT EXISTS idx_action ON user_logs (action)`,
-            `CREATE INDEX IF NOT EXISTS idx_details ON user_logs (details)`,
-            `CREATE INDEX IF NOT EXISTS idx_metadata ON user_logs (metadata)`,
-            `CREATE INDEX IF NOT EXISTS idx_timestamp ON user_logs (timestamp)`
+            `CREATE INDEX IF NOT EXISTS idx_details ON user_logs (details(255))`,
+            `CREATE INDEX IF NOT EXISTS idx_metadata ON user_logs (metadata(255))`,
+            `CREATE INDEX IF NOT EXISTS idx_timestamp ON user_logs (timestamp)`,
+            // Composite indexes for common filter combinations
+            `CREATE INDEX IF NOT EXISTS idx_identifier_action ON user_logs (identifier, action)`,
+            `CREATE INDEX IF NOT EXISTS idx_identifier_timestamp ON user_logs (identifier, timestamp DESC)`,
+            `CREATE INDEX IF NOT EXISTS idx_action_timestamp ON user_logs (action, timestamp DESC)`,
+            `CREATE INDEX IF NOT EXISTS idx_identifier_action_timestamp ON user_logs (identifier, action, timestamp DESC)`
         ];
         
         for (const query of queries) {
@@ -213,11 +222,17 @@ app.use((req, res, next) => {
     next();
 });
 
-// Error  middleware
-app.use((err, req, res, next) => {
-    console.error(`Error processing request: ${req.method} ${req.url} - ${err.message}`);
-    res.status(500).send('Internal Server Error');
+// Rate limiting for API endpoints
+const apiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: isProduction ? 100 : 200, // Limit each IP to 100 requests per minute in production
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many requests, please try again later.',
+    skipSuccessfulRequests: false
 });
+
+app.use('/api/', apiLimiter);
 
 
 app.use((req, res, next) => {
@@ -240,25 +255,36 @@ if (isProduction) {
 }
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Input validation helper
+function validateInput(input, maxLength = 500) {
+    if (typeof input !== 'string') return '';
+    return input.trim().slice(0, maxLength);
+}
+
+function sanitizeForSQL(input) {
+    if (typeof input !== 'string') return '';
+    // Remove potentially dangerous characters but keep necessary ones
+    return input.replace(/[;\x00\n\r\\'"\x1a]/g, '');
+}
 
 // Serve static files with authentication except for login page
-app.use(express.static('public', {
-    index: false,  // Disable auto-serving of index.html
-    setHeaders: (res, path) => {
-        // Allow access to login.html and its assets without auth
-        if (path.endsWith('login.html') || path.includes('/assets/')) {
-            return;
-        }
-        // For all other static files, check authentication
-        return (req, res, next) => {
-            if (req.isAuthenticated()) {
-                next();
-            } else {
-                res.redirect('/login');
-            }
-        };
+app.use('/public', (req, res, next) => {
+    // Allow access to login.html and its assets without auth
+    if (req.path.endsWith('login.html') || req.path.includes('/assets/')) {
+        return next();
     }
+    // For all other static files, check authentication
+    if (req.isAuthenticated()) {
+        return next();
+    }
+    res.redirect('/login');
+});
+
+app.use(express.static('public', {
+    index: false  // Disable auto-serving of index.html
 }));
 
 // Auth routes
@@ -309,9 +335,26 @@ app.use('/api', isAuthenticated);
 
 // Add action suggestions endpoint
 app.get('/api/actions', async (req, res) => {
+    let connection = null;
     try {
-        const connection = await pool.getConnection();
-        const searchTerm = req.query.search || '';
+        const searchTerm = validateInput(req.query.search || '', 100);
+        
+        // Don't search if term is too short or empty
+        if (searchTerm.length < 1) {
+            return res.json([]);
+        }
+        
+        connection = await pool.getConnection();
+        
+        // Set query timeout
+        try {
+            await connection.query('SET SESSION max_execution_time = 10000'); // 10 seconds for suggestions
+        } catch (timeoutError) {
+            // Ignore if not supported
+        }
+        
+        // Optimize: use prefix matching when possible for better index usage
+        const searchPattern = searchTerm.length > 2 ? `${searchTerm}%` : `%${searchTerm}%`;
         
         const query = `
             SELECT action, COUNT(*) as count 
@@ -328,50 +371,106 @@ app.get('/api/actions', async (req, res) => {
             LIMIT 10
         `;
         
-        const searchPattern = searchTerm ? `%${searchTerm}%` : '%';
         const params = [
             searchPattern,    
             searchTerm,       
             `${searchTerm}%`  
         ];
         
-        const [rows] = await connection.execute(query, params);
-        connection.release();
+        // Execute with timeout protection
+        const queryPromise = connection.execute(query, params);
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Query timeout')), 10000);
+        });
+        
+        const result = await Promise.race([queryPromise, timeoutPromise]);
+        const [rows] = result;
+        
+        if (connection) {
+            connection.release();
+        }
+        
         res.json(rows);
     } catch (error) {
+        if (connection) {
+            connection.release();
+        }
         console.error('Database error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        
+        if (error instanceof Error && error.message === 'Query timeout') {
+            res.status(504).json({ error: 'Query timeout' });
+        } else {
+            res.status(500).json({ error: 'Internal server error' });
+        }
     }
 });
 
 app.get('/api/logs', async (req, res) => {
+    let connection = null;
     try {
         const startTime = process.hrtime();
-        const connection = await pool.getConnection();
+        connection = await pool.getConnection();
+        
+        // Set query timeout (30 seconds) - may not be available in all MySQL versions
+        try {
+            await connection.query('SET SESSION max_execution_time = 30000');
+        } catch (timeoutError) {
+            // Ignore if max_execution_time is not supported (older MySQL versions)
+            // We still have Promise.race timeout protection
+        }
         
         let query = 'SELECT id, identifier, action, details, metadata, timestamp FROM user_logs WHERE 1=1';
         const params = [];
 
-        // Add filters
+        // Validate and sanitize inputs
+        // Optimize identifier filter - use prefix matching when possible
         if (req.query.identifier) {
-            query += ' AND identifier LIKE ?';
-            params.push(`%${req.query.identifier}%`);
+            const identifierValue = validateInput(req.query.identifier, 200);
+            if (identifierValue.length > 0) {
+                // If identifier starts with "license:" or looks like a license, use prefix matching
+                if (identifierValue.startsWith('license:') || /^[a-f0-9]{32,}$/i.test(identifierValue)) {
+                    // Use prefix matching for better index usage
+                    query += ' AND identifier LIKE ?';
+                    params.push(`${identifierValue}%`);
+                } else {
+                    // For other identifiers, try to use prefix if it doesn't start with wildcard
+                    // Otherwise fall back to full LIKE (less efficient but necessary)
+                    query += ' AND identifier LIKE ?';
+                    params.push(`%${identifierValue}%`);
+                }
+            }
         }
 
+        // Optimize action filter - prefer exact matches, use prefix matching when possible
         if (req.query.action) {
-            const actions = req.query.action.split('|').map(a => a.trim());
-            if (actions.length > 0) {
+            const actionInput = validateInput(req.query.action, 500);
+            const actions = actionInput.split('|').map(a => a.trim()).filter(a => a.length > 0 && a.length <= 100);
+            if (actions.length > 0 && actions.length <= 20) { // Limit to 20 actions max
                 const conditions = [];
                 
                 actions.forEach(action => {
                     if (action.startsWith('=')) {
-                        // Exact match (remove the = prefix)
-                        conditions.push('action = ?');
-                        params.push(action.substring(1));
+                        // Exact match (remove the = prefix) - most efficient
+                        const exactAction = sanitizeForSQL(action.substring(1));
+                        if (exactAction.length > 0) {
+                            conditions.push('action = ?');
+                            params.push(exactAction);
+                        }
+                    } else if (action.length > 3) {
+                        // For longer actions, use prefix matching when possible
+                        // This allows index usage
+                        const sanitizedAction = sanitizeForSQL(action);
+                        if (sanitizedAction.length > 0) {
+                            conditions.push('action LIKE ?');
+                            params.push(`${sanitizedAction}%`);
+                        }
                     } else {
-                        // Like match
-                        conditions.push('action LIKE ?');
-                        params.push(`%${action}%`);
+                        // For short actions, use full LIKE (less efficient but necessary)
+                        const sanitizedAction = sanitizeForSQL(action);
+                        if (sanitizedAction.length > 0) {
+                            conditions.push('action LIKE ?');
+                            params.push(`%${sanitizedAction}%`);
+                        }
                     }
                 });
                 
@@ -381,46 +480,81 @@ app.get('/api/logs', async (req, res) => {
             }
         }
 
+        // Optimize details filter - use prefix matching when possible
         if (req.query.details) {
-            query += ' AND details LIKE ?';
-            params.push(`%${req.query.details}%`);
+            const detailsValue = validateInput(req.query.details, 500);
+            if (detailsValue.length > 0) {
+                // If details is a reasonable length and doesn't need wildcard search, use prefix
+                if (detailsValue.length > 5 && !detailsValue.includes(' ')) {
+                    // Use prefix matching for better index usage
+                    query += ' AND details LIKE ?';
+                    params.push(`${detailsValue}%`);
+                } else {
+                    // Fall back to full LIKE for complex searches
+                    query += ' AND details LIKE ?';
+                    params.push(`%${detailsValue}%`);
+                }
+            }
         }
 
+        // Optimize server filter - use JSON_UNQUOTE for better performance
         if (req.query.server) {
-            query += ' AND JSON_EXTRACT(metadata, "$.playerServerId") = ?';
-            params.push(req.query.server);
+            const serverId = validateInput(req.query.server, 10);
+            if (serverId.length > 0 && /^\d+$/.test(serverId)) {
+                query += ' AND JSON_UNQUOTE(JSON_EXTRACT(metadata, "$.playerServerId")) = ?';
+                params.push(serverId);
+            }
         }
 
-        // Filtering by minigames - exact implementation from reference
+        // Filtering by minigames - optimized to use index when possible
         if (req.query.minigames === 'none') {
+            // Use exact action matches first (can use index), then check metadata
             query += ` AND (
-                action NOT IN (?, ?, ?)
-                OR metadata LIKE ?
+                (action NOT IN (?, ?, ?) AND action IS NOT NULL)
+                OR (metadata LIKE ? AND metadata IS NOT NULL)
             )`;
             params.push('Player Died', 'Player Killed', 'Killed Player');
             params.push('%"minigames":[]%');
         }
 
+        // Timestamp filters - already optimized with index
         if (req.query.before) {
-            query += ' AND UNIX_TIMESTAMP(timestamp) < ?';
-            params.push(parseInt(req.query.before));
+            const beforeTimestamp = parseInt(req.query.before);
+            if (!isNaN(beforeTimestamp) && beforeTimestamp > 0) {
+                query += ' AND timestamp < FROM_UNIXTIME(?)';
+                params.push(beforeTimestamp);
+            }
         }
 
         if (req.query.after) {
-            query += ' AND UNIX_TIMESTAMP(timestamp) > ?';
-            params.push(parseInt(req.query.after));
+            const afterTimestamp = parseInt(req.query.after);
+            if (!isNaN(afterTimestamp) && afterTimestamp > 0) {
+                query += ' AND timestamp > FROM_UNIXTIME(?)';
+                params.push(afterTimestamp);
+            }
         }
 
-        // Add pagination
-        const page = parseInt(req.query.page) || 1;
+        // Add pagination with validation
+        const page = Math.max(1, Math.min(1000, parseInt(req.query.page) || 1)); // Limit to 1000 pages max
         const limit = 30;
         const offset = (page - 1) * limit;
         
+        // Order by timestamp DESC to use index efficiently
         query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
         params.push(limit, offset);
 
-        const [rows] = await connection.execute(query, params);
-        connection.release();
+        // Execute query with timeout protection
+        const queryPromise = connection.execute(query, params);
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Query timeout')), 30000);
+        });
+        
+        const result = await Promise.race([queryPromise, timeoutPromise]);
+        const [rows] = result;
+        
+        if (connection) {
+            connection.release();
+        }
 
         // Calculate query time in milliseconds using high-resolution time
         const endTime = process.hrtime(startTime);
@@ -433,9 +567,34 @@ app.get('/api/logs', async (req, res) => {
             time: Date.now()
         });
     } catch (error) {
+        if (connection) {
+            connection.release();
+        }
         console.error('Database error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        
+        // Check if it's a timeout error
+        if (error instanceof Error && error.message === 'Query timeout') {
+            res.status(504).json({ error: 'Query timeout - try refining your search filters' });
+        } else {
+            res.status(500).json({ error: 'Internal server error' });
+        }
     }
+});
+
+// Error middleware (must be last)
+app.use((err, req, res, next) => {
+    console.error(`Error processing request: ${req.method} ${req.url} - ${err.message}`);
+    if (err.stack && !isProduction) {
+        console.error(err.stack);
+    }
+    
+    if (res.headersSent) {
+        return next(err);
+    }
+    
+    res.status(err.status || 500).json({ 
+        error: isProduction ? 'Internal server error' : err.message 
+    });
 });
 
 app.listen(port, () => {
